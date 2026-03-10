@@ -10,6 +10,7 @@
 #include <freertos/semphr.h>
 #include <ArduinoJson.h>
 #include <vector>
+#include <esp_wifi.h>
 
 // =============================================================================
 // BLUEPAD32 GLOBAL CONTROLLER POINTER
@@ -22,7 +23,7 @@ ControllerPtr myGamepad = nullptr;
 // PROTOCOL DEFINITIONS - AERONAUTICAL PRECISION
 // =============================================================================
 
-// Pacote recebido da Asa Voadora (Telemetria Otimizada - 22 Bytes)
+// Pacote recebido da Asa Voadora (Telemetria Otimizada - 23 Bytes)
 typedef struct __attribute__((packed)) {
     uint8_t   sync_header;      // Sempre 0xAA
     uint8_t   fsm_state;        // 0=MANUAL, 1=ANGLE, 2=HOLD, 3=AUTO, 4=RTH
@@ -33,6 +34,7 @@ typedef struct __attribute__((packed)) {
     int32_t   latitude_gps;     // Lat bruta * 10^7
     int32_t   longitude_gps;    // Lon bruta * 10^7
     uint16_t  battery_volt_mv;  // Bateria em milivolts
+    uint8_t   ground_speed_ms;  // Ground Speed em m/s (NOVO)
     int8_t    rssi_uplink;      // Sinal LoRa no VANT
     uint8_t   checksum_crc8;    // Validador
 } PacketTelemetryLoRa_t;
@@ -150,17 +152,20 @@ public:
     bool sendUplinkCommand(const PacketUplinkLoRa_t &cmd) {
         LoRa.beginPacket();
         LoRa.write((uint8_t*)&cmd, sizeof(PacketUplinkLoRa_t));
-        return LoRa.endPacket() == 1;
+        // CRÍTICO: Transmissão assíncrona para não bloquear o loop em tempo real
+        return LoRa.endPacket(true); // true = async mode
     }
     
     bool sendWaypoint(const PacketWaypointLoRa_t &wp) {
         LoRa.beginPacket();
         LoRa.write((uint8_t*)&wp, sizeof(PacketWaypointLoRa_t));
-        return LoRa.endPacket() == 1;
+        // Transmissão assíncrona para não bloquear o sistema
+        return LoRa.endPacket(true); // true = async mode
     }
     
     bool receiveTelemetry(PacketTelemetryLoRa_t &telemetry) {
         int packetSize = LoRa.parsePacket();
+        // Atualizado para 23 bytes com ground_speed_ms
         if (packetSize == sizeof(PacketTelemetryLoRa_t)) {
             LoRa.readBytes((uint8_t*)&telemetry, sizeof(PacketTelemetryLoRa_t));
             
@@ -212,7 +217,8 @@ public:
             return;
         }
         
-        StaticJsonDocument<512> doc;
+        // CRÍTICO: Usar DynamicJsonDocument para evitar Stack Overflow na task LwIP
+        DynamicJsonDocument doc(512);
         doc["type"] = "telemetry";
         doc["fsm_state"] = global_state.telemetry.fsm_state;
         doc["altitude_m"] = global_state.telemetry.altitude_cm / 100.0f;
@@ -222,6 +228,7 @@ public:
         doc["latitude"] = global_state.telemetry.latitude_gps / 10000000.0;
         doc["longitude"] = global_state.telemetry.longitude_gps / 10000000.0;
         doc["battery_v"] = global_state.telemetry.battery_volt_mv / 1000.0f;
+        doc["ground_speed_ms"] = global_state.telemetry.ground_speed_ms;
         doc["rssi_uplink"] = global_state.telemetry.rssi_uplink;
         
         // Gamepad status
@@ -263,7 +270,8 @@ private:
     }
     
     void handleWebSocketMessage(AsyncWebSocketClient *client, uint8_t *data, size_t len) {
-        StaticJsonDocument<1024> doc;
+        // CRÍTICO: Usar DynamicJsonDocument para evitar Stack Overflow na task LwIP
+        DynamicJsonDocument doc(1024);
         DeserializationError error = deserializeJson(doc, data, len);
         
         if (error) {
@@ -415,16 +423,20 @@ void realTimeTask(void *parameter) {
                 
                 lora_comm.sendUplinkCommand(cmd);
                 
-                // Send waypoints if dirty
+                // CRÍTICO: Copiar waypoints localmente e liberar Mutex ANTES dos delays
+                std::vector<PacketWaypointLoRa_t> waypoints_to_send;
                 if (global_state.waypoints_dirty) {
-                    for (const auto& wp : global_state.waypoints) {
-                        lora_comm.sendWaypoint(wp);
-                        vTaskDelay(pdMS_TO_TICKS(50)); // Small delay between waypoints
-                    }
+                    waypoints_to_send = global_state.waypoints; // Cópia em RAM
                     global_state.waypoints_dirty = false;
                 }
                 
-                xSemaphoreGive(global_state.mutex);
+                xSemaphoreGive(global_state.mutex); // LIBERA O MUTEX AQUI!
+                
+                // Transmite livremente sem travar o resto do sistema
+                for (const auto& wp : waypoints_to_send) {
+                    lora_comm.sendWaypoint(wp);
+                    vTaskDelay(pdMS_TO_TICKS(50)); // Delay seguro fora do Mutex
+                }
             }
         }
         loop_counter++;
@@ -482,6 +494,9 @@ void setup() {
     }
     Serial.println("\nWiFi connected!");
     Serial.printf("IP address: %s\n", WiFi.localIP().toString().c_str());
+    
+    // CRÍTICO: Desabilitar economia de energia do WiFi para máxima performance
+    esp_wifi_set_ps(WIFI_PS_NONE);
     
     // Initialize LoRa
     if (!lora_comm.initialize()) {

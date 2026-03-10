@@ -482,11 +482,11 @@ class GroundControlStation {
     // =============================================================================
     
     updateHUD(data) {
-        // Calculate derived values
+        // Calculate derived values from REAL telemetry data
         const altitude = data.altitude_m || 0;
-        const speed = this.calculateGroundSpeed(data);
+        const speed = data.ground_speed_ms || 0; // DADO REAL do VANT
         const distance = this.calculateDistanceFromHome(data.latitude, data.longitude);
-        const vspeed = this.calculateVerticalSpeed(data);
+        const vspeed = this.calculateVerticalSpeed(data); // Mantém cálculo derivado
         
         // Update HUD displays
         document.getElementById('hud-altitude').textContent = `${altitude.toFixed(1)}m`;
@@ -502,8 +502,9 @@ class GroundControlStation {
     }
 
     calculateGroundSpeed(data) {
-        // Simple ground speed calculation (would need GPS data over time for accurate calculation)
-        return Math.random() * 20 + 10; // Placeholder: 10-30 m/s
+        // REMOVIDO: Dados falsos com Math.random()
+        // USA: ground_speed_ms real vindo do VANT via LoRa
+        return data.ground_speed_ms || 0;
     }
 
     calculateDistanceFromHome(lat, lon) {
