@@ -9,6 +9,14 @@
 #include <freertos/task.h>
 #include <freertos/semphr.h>
 #include <ArduinoJson.h>
+#include <vector>
+
+// =============================================================================
+// BLUEPAD32 GLOBAL CONTROLLER POINTER
+// =============================================================================
+
+// Global controller pointer for callback compatibility
+ControllerPtr myGamepad = nullptr;
 
 // =============================================================================
 // PROTOCOL DEFINITIONS - AERONAUTICAL PRECISION
@@ -297,69 +305,66 @@ private:
 };
 
 // =============================================================================
-// GAMEPAD CONTROLLER CLASS - BLUEPAD32 INTEGRATION
+// GAMEPAD CONTROLLER CLASS - BLUEPAD32 INTEGRATION (CORRECTED)
 // =============================================================================
 
 class GamepadController {
-private:
-    GamepadPtr myGamepad;
-    
 public:
     void initialize() {
-        Bluepad32.begin();
-        Bluepad32.setGamepadCallback([this](GamepadPtr gamepad) {
-            this->onGamepadConnected(gamepad);
-        });
+        Bluepad32.setupControllerEvents(
+            [](ControllerPtr ctl) { // Callback de conexão
+                Serial.println("Controle Conectado!");
+                if (myGamepad == nullptr) {
+                    myGamepad = ctl;
+                }
+            },
+            [](ControllerPtr ctl) { // Callback de desconexão
+                Serial.println("Controle Desconectado!");
+                if (myGamepad == ctl) {
+                    myGamepad = nullptr;
+                    global_state.gamepad_connected = false;
+                }
+            }
+        );
     }
     
     void update() {
+        // ESSENCIAL: O Bluepad32 precisa atualizar o estado interno primeiro
+        bool dataUpdated = Bluepad32.update(); 
+        
         if (myGamepad && myGamepad->isConnected()) {
-            // Read analog sticks (-32768 to 32767)
+            global_state.gamepad_connected = true;
+
+            // Lendo os eixos (-511 a 512 no padrão atual do Bluepad32)
             int32_t axis_x = myGamepad->axisX();
             int32_t axis_y = myGamepad->axisY();
+            int32_t throttle_axis = myGamepad->throttle(); // Gatilho R2
             
-            // Convert to -100 to 100 range
-            global_state.gamepad_roll = constrain(map(axis_x, -32768, 32767, -100, 100), -100, 100);
-            global_state.gamepad_pitch = constrain(map(axis_y, -32768, 32767, -100, 100), -100, 100);
+            // Convertendo para o seu range -100 a 100
+            global_state.gamepad_roll = constrain(map(axis_x, -511, 512, -100, 100), -100, 100);
+            global_state.gamepad_pitch = constrain(map(axis_y, -511, 512, -100, 100), -100, 100);
+            global_state.gamepad_throttle = constrain(map(throttle_axis, 0, 1023, 0, 100), 0, 100);
             
-            // Throttle (right trigger or Y axis)
-            int32_t throttle = myGamepad->axisRY();
-            global_state.gamepad_throttle = constrain(map(throttle, -32768, 32767, 0, 100), 0, 100);
+            // D-PAD
+            uint8_t dpad = myGamepad->dpad();
+            if (dpad == DPAD_UP) global_state.gamepad_mode = 0;
+            else if (dpad == DPAD_RIGHT) global_state.gamepad_mode = 1;
+            else if (dpad == DPAD_DOWN) global_state.gamepad_mode = 2;
+            else if (dpad == DPAD_LEFT) global_state.gamepad_mode = 3;
             
-            // Mode switching with D-PAD
-            if (myGamepad->pressed(DPAD_UP)) {
-                global_state.gamepad_mode = 0; // MANUAL
-            } else if (myGamepad->pressed(DPAD_RIGHT)) {
-                global_state.gamepad_mode = 1; // ANGLE
-            } else if (myGamepad->pressed(DPAD_DOWN)) {
-                global_state.gamepad_mode = 2; // HOLD
-            } else if (myGamepad->pressed(DPAD_LEFT)) {
-                global_state.gamepad_mode = 3; // AUTO
-            }
-            
-            // Arm/disarm with A button
+            // Arm/disarm com Botão A
             static bool last_a_state = false;
-            bool current_a_state = myGamepad->pressed(A);
+            bool current_a_state = myGamepad->a();
             if (current_a_state && !last_a_state) {
                 global_state.gamepad_arm_switch = !global_state.gamepad_arm_switch;
             }
             last_a_state = current_a_state;
             
-            // Battery level (approximation)
-            global_state.gamepad_battery = myGamepad->batteryLevel();
-            global_state.gamepad_connected = true;
+            global_state.gamepad_battery = myGamepad->battery();
             global_state.last_gamepad_ms = millis();
         } else {
             global_state.gamepad_connected = false;
         }
-        
-        Bluepad32.update();
-    }
-    
-private:
-    void onGamepadConnected(GamepadPtr gamepad) {
-        Serial.println("Gamepad connected!");
-        myGamepad = gamepad;
     }
 };
 
@@ -371,31 +376,28 @@ LoRaComm lora_comm;
 GCSWebSocketServer ws_server;
 GamepadController gamepad_ctrl;
 
-// CORE 1: Real-time Bluetooth and LoRa communication (50Hz/10Hz)
+// CORE 1: Real-time Bluetooth and LoRa communication (50Hz/10Hz) - CORRECTED
 void realTimeTask(void *parameter) {
-    const TickType_t xFrequency_10Hz = pdMS_TO_TICKS(100);
-    const TickType_t xFrequency_50Hz = pdMS_TO_TICKS(20);
+    // Frequência base de 50Hz (20ms)
+    const TickType_t xFrequency = pdMS_TO_TICKS(20);
+    TickType_t xLastWakeTime = xTaskGetTickCount();
     
-    uint32_t last_10hz = 0;
-    uint32_t last_50hz = 0;
+    uint8_t loop_counter = 0; // Para trigar coisas a 10Hz dentro do loop de 50Hz
     
     while (1) {
-        uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+        // 1. Atualiza Gamepad (50Hz)
+        gamepad_ctrl.update();
         
-        // 50Hz: Gamepad processing
-        if (now - last_50hz >= 20) {
-            gamepad_ctrl.update();
-            last_50hz = now;
-        }
-        
-        // 10Hz: LoRa communication
-        if (now - last_10hz >= 100) {
+        // 2. Lida com LoRa (10Hz) - Acontece a cada 5 loops de 50Hz
+        if (loop_counter >= 5) {
+            loop_counter = 0;
+            
             // Receive telemetry
             PacketTelemetryLoRa_t telemetry;
             if (lora_comm.receiveTelemetry(telemetry)) {
                 if (xSemaphoreTake(global_state.mutex, pdMS_TO_TICKS(10))) {
                     global_state.telemetry = telemetry;
-                    global_state.last_telemetry_ms = now;
+                    global_state.last_telemetry_ms = millis();
                     xSemaphoreGive(global_state.mutex);
                 }
             }
@@ -424,36 +426,30 @@ void realTimeTask(void *parameter) {
                 
                 xSemaphoreGive(global_state.mutex);
             }
-            
-            last_10hz = now;
         }
+        loop_counter++;
         
-        taskYIELD();
+        // Coloca a task para dormir estritamente até o próximo ciclo de 20ms
+        vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
 }
 
-// CORE 0: Async WiFi and WebSocket communication (5Hz)
+// CORE 0: Async WiFi and WebSocket communication (5Hz) - CORRECTED
 void asyncTask(void *parameter) {
     const TickType_t xFrequency_5Hz = pdMS_TO_TICKS(200);
-    uint32_t last_broadcast = 0;
+    TickType_t xLastWakeTime = xTaskGetTickCount();
     
     while (1) {
-        uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
-        
         // 5Hz: WebSocket telemetry broadcast
-        if (now - last_broadcast >= 200) {
-            ws_server.broadcastTelemetry();
-            
-            // Update WiFi RSSI
-            global_state.wifi_rssi = WiFi.RSSI();
-            
-            last_broadcast = now;
-        }
+        ws_server.broadcastTelemetry();
         
-        // Clean up disconnected WebSocket clients
-        ws_server.cleanupClients();
+        // Update WiFi RSSI
+        global_state.wifi_rssi = WiFi.RSSI();
         
-        vTaskDelay(pdMS_TO_TICKS(50)); // 20Hz loop for responsiveness
+        // NOTA: Removido ws_server.cleanupClients() - a biblioteca gerencia automaticamente
+        
+        // Coloca a task para dormir estritamente até o próximo ciclo de 200ms
+        vTaskDelayUntil(&xLastWakeTime, xFrequency_5Hz);
     }
 }
 
@@ -493,15 +489,16 @@ void setup() {
         ESP.restart();
     }
     
-    // Initialize Gamepad
+    // Initialize Gamepad (CORRECTED)
     gamepad_ctrl.initialize();
+    // NOTA: Bluepad32.begin() é chamado internamente pelo setupControllerEvents
     
     // Initialize WebSocket server
     ws_server.initialize();
     
-    // Create FreeRTOS tasks on specific cores
-    xTaskCreatePinnedToCore(realTimeTask, "RealTime", 4096, NULL, 3, NULL, 1); // Core 1
-    xTaskCreatePinnedToCore(asyncTask, "Async", 4096, NULL, 2, NULL, 0);      // Core 0
+    // Create FreeRTOS tasks on specific cores with increased stack for JSON processing
+    xTaskCreatePinnedToCore(realTimeTask, "RealTime", 8192, NULL, 3, NULL, 1); // Core 1 - Stack aumentado
+    xTaskCreatePinnedToCore(asyncTask, "Async", 8192, NULL, 2, NULL, 0);      // Core 0 - Stack aumentado
     
     Serial.println("=== GCS SYSTEM READY ===");
 }
