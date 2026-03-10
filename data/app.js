@@ -33,6 +33,7 @@ class GroundControlStation {
         this.initializeMap();
         this.initializeEventListeners();
         this.initializePFD();
+        this.initializeControlLayout();
         this.startSystemClock();
         this.addAlert('System initialized', 'info');
     }
@@ -797,6 +798,179 @@ class GroundControlStation {
         });
     }
 }
+
+// =============================================================================
+// TAB NAVIGATION SYSTEM
+// =============================================================================
+
+function switchTab(tabId) {
+    // Hide all tab contents
+    document.querySelectorAll('.tab-content').forEach(tab => {
+        tab.classList.remove('active');
+        tab.style.display = 'none';
+    });
+    
+    // Remove active class from all tab buttons
+    document.querySelectorAll('.tab-button').forEach(button => {
+        button.classList.remove('active');
+    });
+    
+    // Show selected tab
+    const selectedTab = document.getElementById(`tab-${tabId}`);
+    if (selectedTab) {
+        selectedTab.classList.add('active');
+        selectedTab.style.display = 'block';
+    }
+    
+    // Add active class to selected button
+    const selectedButton = document.querySelector(`[data-tab="${tabId}"]`);
+    if (selectedButton) {
+        selectedButton.classList.add('active');
+    }
+    
+    console.log(`Switched to tab: ${tabId}`);
+}
+
+// =============================================================================
+// CONTROL LAYOUT FUNCTIONALITY
+// =============================================================================
+
+// Add this method to GroundControlStation class
+GroundControlStation.prototype.initializeControlLayout = function() {
+    this.virtualJoystick = null;
+    this.joystickActive = false;
+    this.lastJoystickSend = 0;
+    
+    this.initializeTabNavigation();
+    this.initializeFlightControls();
+    this.initializeSpeedControl();
+    this.initializeVirtualJoystick();
+};
+
+GroundControlStation.prototype.initializeTabNavigation = function() {
+    // Add click listeners to tab buttons
+    document.querySelectorAll('.tab-button').forEach(button => {
+        button.addEventListener('click', (e) => {
+            const tabId = e.target.getAttribute('data-tab');
+            switchTab(tabId);
+        });
+    });
+};
+
+GroundControlStation.prototype.initializeFlightControls = function() {
+    // Flight Mode Override buttons
+    document.getElementById('btn-manual').addEventListener('click', () => {
+        this.sendCommand('SET_MODE', 'MANUAL');
+        this.addAlert('Flight mode: MANUAL', 'info');
+    });
+    
+    document.getElementById('btn-stabilize').addEventListener('click', () => {
+        this.sendCommand('SET_MODE', 'STABILIZE');
+        this.addAlert('Flight mode: STABILIZE', 'info');
+    });
+    
+    document.getElementById('btn-rth').addEventListener('click', () => {
+        this.sendCommand('SET_MODE', 'RETURN_TO_LAUNCH');
+        this.addAlert('Flight mode: RETURN TO LAUNCH', 'danger');
+    });
+};
+
+GroundControlStation.prototype.initializeSpeedControl = function() {
+    const speedSlider = document.getElementById('speed-slider');
+    const speedValue = document.getElementById('speed-value');
+    
+    // Update display on input
+    speedSlider.addEventListener('input', (e) => {
+        const value = e.target.value;
+        speedValue.textContent = `${value} m/s`;
+    });
+    
+    // Send command on change
+    speedSlider.addEventListener('change', (e) => {
+        const value = parseInt(e.target.value);
+        this.sendCommand('SET_SPEED', value);
+        this.addAlert(`Target speed set to ${value} m/s`, 'info');
+    });
+};
+
+GroundControlStation.prototype.initializeVirtualJoystick = function() {
+    // Initialize Nipple.js
+    this.virtualJoystick = nipplejs.create({
+        zone: document.getElementById('joystick-zone'),
+        mode: 'static',
+        position: { left: '50%', top: '50%' },
+        color: 'rgba(0, 255, 136, 0.5)',
+        size: 150,
+        threshold: 0.1,
+        fadeTime: 250,
+        multitouch: false,
+        maxNumberOfNipples: 1,
+        dataOnly: false,
+        restJoystick: true,
+        restOpacity: 0.5,
+        lockX: false,
+        lockY: false,
+        shape: 'circle'
+    });
+    
+    // Joystick move event
+    this.virtualJoystick.on('move', (evt, data) => {
+        this.joystickActive = true;
+        this.updateJoystickDisplay(data);
+        this.sendJoystickCommand(data);
+    });
+    
+    // Joystick end event (when released)
+    this.virtualJoystick.on('end', (evt, data) => {
+        this.joystickActive = false;
+        this.updateJoystickDisplay({ force: 0, angle: 0 });
+        this.sendJoystickCommand({ force: 0, angle: 0 });
+    });
+};
+
+GroundControlStation.prototype.updateJoystickDisplay = function(data) {
+    const rollValue = document.getElementById('roll-value');
+    const pitchValue = document.getElementById('pitch-value');
+    
+    // Convert force/angle to X/Y values (-100 to 100)
+    const x = Math.round(data.force * Math.cos(data.angle * Math.PI / 180) * 100);
+    const y = Math.round(data.force * Math.sin(data.angle * Math.PI / 180) * 100);
+    
+    rollValue.textContent = x;
+    pitchValue.textContent = y;
+};
+
+GroundControlStation.prototype.sendJoystickCommand = function(data) {
+    // Rate limit to ~10Hz (100ms between sends)
+    const now = Date.now();
+    if (now - this.lastJoystickSend < 100) {
+        return;
+    }
+    
+    this.lastJoystickSend = now;
+    
+    // Convert force/angle to roll/pitch values (-100 to 100)
+    const roll = Math.round(data.force * Math.cos(data.angle * Math.PI / 180) * 100);
+    const pitch = Math.round(data.force * Math.sin(data.angle * Math.PI / 180) * 100);
+    
+    this.sendCommand('JOYSTICK', { roll, pitch });
+};
+
+GroundControlStation.prototype.sendCommand = function(action, value) {
+    const command = {
+        type: 'command',
+        action: action,
+        value: value
+    };
+    
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify(command));
+        console.log('Command sent:', command);
+    } else {
+        console.warn('WebSocket not connected, command queued:', command);
+        this.addAlert('WebSocket not connected - command not sent', 'warning');
+    }
+};
 
 // =============================================================================
 // GLOBAL INITIALIZATION
