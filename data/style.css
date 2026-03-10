@@ -57,7 +57,7 @@ GROUND CONTROL STATION - AVIATION GRADE DARK TACTICAL THEME
 }
 
 /* =============================================================================
-TAB NAVIGATION SYSTEM
+TAB NAVIGATION SYSTEM - CORRIGIDO
 ============================================================================= */
 
 .tab-navigation {
@@ -67,7 +67,7 @@ TAB NAVIGATION SYSTEM
     padding: var(--spacing-md);
     background: var(--bg-card);
     border-bottom: 2px solid var(--border-primary);
-    margin-bottom: var(--spacing-lg);
+    margin-bottom: 0; /* Removido para evitar espaços extras */
 }
 
 .tab-button {
@@ -113,23 +113,37 @@ TAB NAVIGATION SYSTEM
     border-top: 6px solid var(--accent-primary);
 }
 
+/* CORREÇÃO CRÍTICA: Sistema de abas funcional */
 .tab-content {
-    display: none;
+    display: none !important; /* Força ocultação completa */
 }
 
 .tab-content.active {
-    display: block;
+    display: block !important; /* Força exibição quando ativo */
 }
 
 /* =============================================================================
-CONTROL LAYOUT STYLES
+CONTROL LAYOUT STYLES - PROFISSIONAL GRID
 ============================================================================= */
 
 .controls-main {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-    gap: var(--spacing-lg);
+    grid-template-columns: 1fr 1fr; /* Duas colunas iguais */
+    gap: var(--spacing-xl);
     padding: var(--spacing-lg);
+    min-height: 600px; /* Altura mínima para layout estável */
+}
+
+.controls-left {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-lg);
+}
+
+.controls-right {
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .control-section {
@@ -146,26 +160,39 @@ CONTROL LAYOUT STYLES
     box-shadow: var(--shadow-primary);
 }
 
-.control-buttons {
-    display: flex;
-    flex-direction: column;
+/* Power Control Buttons */
+.power-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     gap: var(--spacing-md);
 }
 
-.control-buttons .btn {
-    width: 100%;
-    justify-content: center;
-    padding: var(--spacing-lg);
-    font-size: 1rem;
-    font-weight: 700;
+.btn-large {
+    padding: var(--spacing-lg) var(--spacing-xl);
+    font-size: 1.1rem;
+    font-weight: 800;
     text-transform: uppercase;
     letter-spacing: 1px;
+    border-radius: var(--radius-md);
+    transition: all var(--transition-fast);
+}
+
+.btn-success {
+    background: var(--status-good);
+    color: var(--bg-primary);
+    border: 2px solid var(--status-good);
+}
+
+.btn-success:hover {
+    background: transparent;
+    color: var(--status-good);
+    box-shadow: 0 0 20px rgba(0, 255, 136, 0.4);
 }
 
 .btn-danger {
     background: var(--status-danger);
     color: var(--text-primary);
-    border-color: var(--status-danger);
+    border: 2px solid var(--status-danger);
 }
 
 .btn-danger:hover {
@@ -175,42 +202,73 @@ CONTROL LAYOUT STYLES
     animation: danger-pulse 1s infinite;
 }
 
-.btn-secondary {
-    background: var(--accent-secondary);
-    color: var(--bg-primary);
-    border-color: var(--accent-secondary);
+/* Flight Modes Grid */
+.flight-modes-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--spacing-sm);
 }
 
-.btn-secondary:hover {
+.btn-mode {
+    padding: var(--spacing-md);
+    font-size: 0.9rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-radius: var(--radius-sm);
+    transition: all var(--transition-fast);
+}
+
+.btn-critical {
+    grid-column: span 3; /* RTL ocupa linha inteira */
+    animation: critical-glow 2s infinite;
+}
+
+.btn-info {
+    background: var(--accent-info);
+    color: var(--text-primary);
+    border-color: var(--accent-info);
+}
+
+.btn-info:hover {
     background: transparent;
-    color: var(--accent-secondary);
-    box-shadow: 0 0 15px rgba(0, 170, 255, 0.3);
+    color: var(--accent-info);
+    box-shadow: 0 0 15px rgba(102, 102, 255, 0.3);
 }
 
-.cruising-control {
+.btn-purple {
+    background: #9b59b6;
+    color: var(--text-primary);
+    border-color: #9b59b6;
+}
+
+.btn-purple:hover {
+    background: transparent;
+    color: #9b59b6;
+    box-shadow: 0 0 15px rgba(155, 89, 182, 0.3);
+}
+
+/* Flight Targets Controls */
+.targets-container {
     display: flex;
     flex-direction: column;
-    gap: var(--spacing-md);
+    gap: var(--spacing-lg);
 }
 
-.control-label {
-    font-family: var(--font-mono);
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: var(--spacing-sm);
-}
-
-.speed-control {
+.target-control {
     display: flex;
-    align-items: center;
-    gap: var(--spacing-md);
+    flex-direction: column;
+    gap: var(--spacing-sm);
 }
 
-.speed-slider {
-    flex: 1;
+.target-input-group {
+    display: grid;
+    grid-template-columns: 2fr 1fr auto;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.target-slider {
     height: 8px;
     background: var(--bg-tertiary);
     border: 1px solid var(--border-primary);
@@ -220,7 +278,7 @@ CONTROL LAYOUT STYLES
     appearance: none;
 }
 
-.speed-slider::-webkit-slider-thumb {
+.target-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
     width: 20px;
@@ -233,7 +291,7 @@ CONTROL LAYOUT STYLES
     transition: all var(--transition-fast);
 }
 
-.speed-slider::-moz-range-thumb {
+.target-slider::-moz-range-thumb {
     width: 20px;
     height: 20px;
     background: var(--accent-primary);
@@ -244,43 +302,71 @@ CONTROL LAYOUT STYLES
     transition: all var(--transition-fast);
 }
 
-.speed-slider:hover::-webkit-slider-thumb {
-    transform: scale(1.2);
-    box-shadow: 0 0 20px rgba(0, 255, 136, 0.5);
-}
-
-.speed-slider:hover::-moz-range-thumb {
-    transform: scale(1.2);
-    box-shadow: 0 0 20px rgba(0, 255, 136, 0.5);
-}
-
-.speed-value {
+.target-number {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-sm);
+    padding: var(--spacing-sm);
+    color: var(--text-primary);
     font-family: var(--font-mono);
-    font-size: 1rem;
-    font-weight: 700;
-    color: var(--accent-primary);
-    text-shadow: 0 0 10px rgba(0, 255, 136, 0.3);
-    min-width: 80px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-align: center;
+    outline: none;
+    transition: all var(--transition-fast);
+}
+
+.target-number:focus {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 10px rgba(0, 255, 136, 0.2);
+}
+
+.target-unit {
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    min-width: 30px;
     text-align: center;
 }
 
-.joystick-container {
+.btn-send-targets {
+    padding: var(--spacing-lg);
+    font-size: 1rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-sm);
+    margin-top: var(--spacing-md);
+}
+
+.btn-icon {
+    font-size: 1.2rem;
+}
+
+/* Enhanced Joystick Section */
+.joystick-section {
+    height: 100%;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: var(--spacing-md);
+    justify-content: center;
 }
 
 #joystick-zone {
-    width: 200px;
-    height: 200px;
-    background: var(--bg-tertiary);
-    border: 2px solid var(--border-primary);
-    border-radius: var(--radius-lg);
+    width: 250px;
+    height: 250px;
+    background: radial-gradient(circle, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
+    border: 3px solid var(--border-primary);
+    border-radius: 50%;
     position: relative;
     touch-action: none;
     overflow: hidden;
-    box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.3);
+    box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.4), 0 0 20px rgba(0, 255, 136, 0.1);
 }
 
 #joystick-zone::before {
@@ -289,15 +375,29 @@ CONTROL LAYOUT STYLES
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: 10px;
-    height: 10px;
+    width: 12px;
+    height: 12px;
     background: var(--accent-primary);
     border-radius: 50%;
-    box-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+    box-shadow: 0 0 15px rgba(0, 255, 136, 0.6);
     z-index: 1;
 }
 
+#joystick-zone::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 80px;
+    height: 80px;
+    border: 2px dashed var(--border-secondary);
+    border-radius: 50%;
+    opacity: 0.3;
+}
+
 .joystick-info {
+    margin-top: var(--spacing-lg);
     width: 100%;
     text-align: center;
 }
@@ -307,7 +407,7 @@ CONTROL LAYOUT STYLES
     justify-content: center;
     gap: var(--spacing-lg);
     font-family: var(--font-mono);
-    font-size: 0.875rem;
+    font-size: 0.9rem;
     color: var(--text-secondary);
 }
 
@@ -316,6 +416,7 @@ CONTROL LAYOUT STYLES
     padding: var(--spacing-sm) var(--spacing-md);
     border: 1px solid var(--border-primary);
     border-radius: var(--radius-md);
+    min-width: 120px;
 }
 
 .joystick-coords span span {
@@ -324,7 +425,7 @@ CONTROL LAYOUT STYLES
 }
 
 /* =============================================================================
-DANGER ANIMATIONS
+ENHANCED ANIMATIONS
 ============================================================================= */
 
 @keyframes danger-pulse {
@@ -333,6 +434,17 @@ DANGER ANIMATIONS
     }
     50% { 
         box-shadow: 0 0 40px rgba(255, 51, 102, 0.8);
+    }
+}
+
+@keyframes critical-glow {
+    0%, 100% { 
+        box-shadow: 0 0 15px rgba(255, 51, 102, 0.3);
+        transform: scale(1);
+    }
+    50% { 
+        box-shadow: 0 0 30px rgba(255, 51, 102, 0.6);
+        transform: scale(1.02);
     }
 }
 

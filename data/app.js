@@ -800,11 +800,11 @@ class GroundControlStation {
 }
 
 // =============================================================================
-// TAB NAVIGATION SYSTEM
+// TAB NAVIGATION SYSTEM - CORRIGIDO
 // =============================================================================
 
 function switchTab(tabId) {
-    // Hide all tab contents
+    // Hide all tab contents with !important override
     document.querySelectorAll('.tab-content').forEach(tab => {
         tab.classList.remove('active');
         tab.style.display = 'none';
@@ -815,7 +815,7 @@ function switchTab(tabId) {
         button.classList.remove('active');
     });
     
-    // Show selected tab
+    // Show selected tab with !important override
     const selectedTab = document.getElementById(`tab-${tabId}`);
     if (selectedTab) {
         selectedTab.classList.add('active');
@@ -832,7 +832,7 @@ function switchTab(tabId) {
 }
 
 // =============================================================================
-// CONTROL LAYOUT FUNCTIONALITY
+// CONTROL LAYOUT FUNCTIONALITY - EXPANDIDO
 // =============================================================================
 
 // Add this method to GroundControlStation class
@@ -842,8 +842,9 @@ GroundControlStation.prototype.initializeControlLayout = function() {
     this.lastJoystickSend = 0;
     
     this.initializeTabNavigation();
+    this.initializePowerControls();
     this.initializeFlightControls();
-    this.initializeSpeedControl();
+    this.initializeTargetControls();
     this.initializeVirtualJoystick();
 };
 
@@ -857,8 +858,21 @@ GroundControlStation.prototype.initializeTabNavigation = function() {
     });
 };
 
+GroundControlStation.prototype.initializePowerControls = function() {
+    // ARM/DISARM Motor buttons
+    document.getElementById('btn-arm').addEventListener('click', () => {
+        this.sendCommand('ARM_MOTOR', true);
+        this.addAlert('Motors ARMED', 'warning');
+    });
+    
+    document.getElementById('btn-disarm').addEventListener('click', () => {
+        this.sendCommand('ARM_MOTOR', false);
+        this.addAlert('Motors DISARMED', 'info');
+    });
+};
+
 GroundControlStation.prototype.initializeFlightControls = function() {
-    // Flight Mode Override buttons
+    // Flight Mode buttons
     document.getElementById('btn-manual').addEventListener('click', () => {
         this.sendCommand('SET_MODE', 'MANUAL');
         this.addAlert('Flight mode: MANUAL', 'info');
@@ -869,38 +883,68 @@ GroundControlStation.prototype.initializeFlightControls = function() {
         this.addAlert('Flight mode: STABILIZE', 'info');
     });
     
-    document.getElementById('btn-rth').addEventListener('click', () => {
-        this.sendCommand('SET_MODE', 'RETURN_TO_LAUNCH');
-        this.addAlert('Flight mode: RETURN TO LAUNCH', 'danger');
+    document.getElementById('btn-hold').addEventListener('click', () => {
+        this.sendCommand('SET_MODE', 'HOLD');
+        this.addAlert('Flight mode: HOLD', 'info');
+    });
+    
+    document.getElementById('btn-auto').addEventListener('click', () => {
+        this.sendCommand('SET_MODE', 'AUTO');
+        this.addAlert('Flight mode: AUTO', 'info');
+    });
+    
+    document.getElementById('btn-rtl').addEventListener('click', () => {
+        this.sendCommand('SET_MODE', 'RTL');
+        this.addAlert('Flight mode: RTL (Return to Launch)', 'danger');
     });
 };
 
-GroundControlStation.prototype.initializeSpeedControl = function() {
+GroundControlStation.prototype.initializeTargetControls = function() {
     const speedSlider = document.getElementById('speed-slider');
-    const speedValue = document.getElementById('speed-value');
+    const speedNumber = document.getElementById('speed-number');
+    const altitudeSlider = document.getElementById('altitude-slider');
+    const altitudeNumber = document.getElementById('altitude-number');
     
-    // Update display on input
+    // Speed control bidirectional sync
     speedSlider.addEventListener('input', (e) => {
-        const value = e.target.value;
-        speedValue.textContent = `${value} m/s`;
+        speedNumber.value = e.target.value;
     });
     
-    // Send command on change
-    speedSlider.addEventListener('change', (e) => {
-        const value = parseInt(e.target.value);
-        this.sendCommand('SET_SPEED', value);
-        this.addAlert(`Target speed set to ${value} m/s`, 'info');
+    speedNumber.addEventListener('input', (e) => {
+        const value = Math.max(10, Math.min(25, parseInt(e.target.value) || 15));
+        speedSlider.value = value;
+        e.target.value = value;
+    });
+    
+    // Altitude control bidirectional sync
+    altitudeSlider.addEventListener('input', (e) => {
+        altitudeNumber.value = e.target.value;
+    });
+    
+    altitudeNumber.addEventListener('input', (e) => {
+        const value = Math.max(15, Math.min(150, parseInt(e.target.value) || 50));
+        altitudeSlider.value = value;
+        e.target.value = value;
+    });
+    
+    // Send targets button
+    document.getElementById('btn-send-targets').addEventListener('click', () => {
+        const speed = parseInt(speedSlider.value);
+        const altitude = parseInt(altitudeSlider.value);
+        
+        this.sendCommand('SET_TARGETS', { speed, altitude });
+        this.addAlert(`Targets sent: Speed ${speed} m/s, Altitude ${altitude} m`, 'info');
     });
 };
 
 GroundControlStation.prototype.initializeVirtualJoystick = function() {
-    // Initialize Nipple.js
+    // Initialize Nipple.js with enhanced configuration
     this.virtualJoystick = nipplejs.create({
         zone: document.getElementById('joystick-zone'),
         mode: 'static',
         position: { left: '50%', top: '50%' },
-        color: 'rgba(0, 255, 136, 0.5)',
-        size: 150,
+        color: 'rgba(0, 255, 136, 0.4)',
+        size: 200, // Increased for 250px zone
         threshold: 0.1,
         fadeTime: 250,
         multitouch: false,

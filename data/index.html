@@ -222,41 +222,76 @@
         <!-- Tab Content: Controls -->
         <div id="tab-controls" class="tab-content" style="display: none;">
             <main class="controls-main">
-                <!-- Flight Mode Override -->
-                <section class="control-section">
-                    <h2 class="module-title">FLIGHT MODE OVERRIDE</h2>
-                    <div class="control-buttons">
-                        <button class="btn btn-primary" id="btn-manual">MANUAL</button>
-                        <button class="btn btn-secondary" id="btn-stabilize">STABILIZE</button>
-                        <button class="btn btn-danger" id="btn-rth">RETURN TO LAUNCH</button>
-                    </div>
-                </section>
-
-                <!-- Cruising Settings -->
-                <section class="control-section">
-                    <h2 class="module-title">CRUISING SETTINGS</h2>
-                    <div class="cruising-control">
-                        <label class="control-label">Target Speed</label>
-                        <div class="speed-control">
-                            <input type="range" id="speed-slider" min="10" max="25" value="15" step="1" class="speed-slider">
-                            <span class="speed-value" id="speed-value">15 m/s</span>
+                <!-- Left Column: Flight Commands -->
+                <div class="controls-left">
+                    <!-- Power Control Section -->
+                    <section class="control-section">
+                        <h2 class="module-title">POWER CONTROL</h2>
+                        <div class="power-buttons">
+                            <button class="btn btn-success btn-large" id="btn-arm">ARM MOTOR</button>
+                            <button class="btn btn-danger btn-large" id="btn-disarm">DISARM MOTOR</button>
                         </div>
-                    </div>
-                </section>
+                    </section>
 
-                <!-- Virtual Joystick -->
-                <section class="control-section">
-                    <h2 class="module-title">VIRTUAL JOYSTICK</h2>
-                    <div class="joystick-container">
-                        <div id="joystick-zone"></div>
-                        <div class="joystick-info">
-                            <div class="joystick-coords">
-                                <span>Roll: <span id="roll-value">0</span></span>
-                                <span>Pitch: <span id="pitch-value">0</span></span>
+                    <!-- Flight Modes Section -->
+                    <section class="control-section">
+                        <h2 class="module-title">FLIGHT MODES</h2>
+                        <div class="flight-modes-grid">
+                            <button class="btn btn-primary btn-mode" id="btn-manual">MANUAL</button>
+                            <button class="btn btn-secondary btn-mode" id="btn-stabilize">STABILIZE</button>
+                            <button class="btn btn-info btn-mode" id="btn-hold">HOLD</button>
+                            <button class="btn btn-purple btn-mode" id="btn-auto">AUTO</button>
+                            <button class="btn btn-danger btn-mode btn-critical" id="btn-rtl">RTL</button>
+                        </div>
+                    </section>
+
+                    <!-- Flight Targets Section -->
+                    <section class="control-section">
+                        <h2 class="module-title">FLIGHT TARGETS</h2>
+                        <div class="targets-container">
+                            <!-- Speed Control -->
+                            <div class="target-control">
+                                <label class="control-label">Target Speed</label>
+                                <div class="target-input-group">
+                                    <input type="range" id="speed-slider" min="10" max="25" value="15" step="1" class="target-slider">
+                                    <input type="number" id="speed-number" min="10" max="25" value="15" step="1" class="target-number">
+                                    <span class="target-unit">m/s</span>
+                                </div>
+                            </div>
+
+                            <!-- Altitude Control -->
+                            <div class="target-control">
+                                <label class="control-label">Target Altitude</label>
+                                <div class="target-input-group">
+                                    <input type="range" id="altitude-slider" min="15" max="150" value="50" step="5" class="target-slider">
+                                    <input type="number" id="altitude-number" min="15" max="150" value="50" step="5" class="target-number">
+                                    <span class="target-unit">m</span>
+                                </div>
+                            </div>
+
+                            <!-- Send Targets Button -->
+                            <button class="btn btn-primary btn-send-targets" id="btn-send-targets">
+                                <span class="btn-icon">⚡</span> SEND TARGETS
+                            </button>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- Right Column: Virtual Joystick -->
+                <div class="controls-right">
+                    <section class="control-section joystick-section">
+                        <h2 class="module-title">VIRTUAL JOYSTICK</h2>
+                        <div class="joystick-container">
+                            <div id="joystick-zone"></div>
+                            <div class="joystick-info">
+                                <div class="joystick-coords">
+                                    <span>Roll: <span id="roll-value">0</span></span>
+                                    <span>Pitch: <span id="pitch-value">0</span></span>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                </section>
+                    </section>
+                </div>
             </main>
         </div>
     </div>
