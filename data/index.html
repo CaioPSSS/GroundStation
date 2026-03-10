@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ground Control Station - Aviation Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="gcs-container">
+        <!-- Header with System Status -->
+        <header class="gcs-header">
+            <div class="header-left">
+                <h1 class="gcs-title">GROUND CONTROL STATION</h1>
+                <div class="connection-status">
+                    <div class="status-indicator" id="ws-status">
+                        <span class="status-dot"></span>
+                        <span class="status-text">WEBSOCKET</span>
+                    </div>
+                    <div class="status-indicator" id="gamepad-status">
+                        <span class="status-dot"></span>
+                        <span class="status-text">GAMEPAD</span>
+                    </div>
+                    <div class="status-indicator" id="lora-status">
+                        <span class="status-dot"></span>
+                        <span class="status-text">LORA</span>
+                    </div>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="system-time" id="system-time">00:00:00</div>
+                <div class="latency-display">
+                    <span class="latency-label">PING:</span>
+                    <span class="latency-value" id="ping-ms">0ms</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Dashboard Grid -->
+        <main class="gcs-main">
+            <!-- Left Column: PFD and HUD -->
+            <section class="left-column">
+                <!-- Primary Flight Display -->
+                <div class="pfd-container">
+                    <h2 class="module-title">PRIMARY FLIGHT DISPLAY</h2>
+                    <div class="pfd-wrapper">
+                        <canvas id="artificial-horizon" width="400" height="400"></canvas>
+                        <div class="heading-indicator">
+                            <div class="heading-tape" id="heading-tape">
+                                <div class="heading-value" id="heading-value">000°</div>
+                            </div>
+                        </div>
+                        <div class="flight-overlay">
+                            <div class="airspeed-indicator">
+                                <div class="speed-value" id="airspeed">0.0</div>
+                                <div class="speed-unit">m/s</div>
+                            </div>
+                            <div class="altitude-indicator">
+                                <div class="alt-value" id="altitude">0.0</div>
+                                <div class="alt-unit">m</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- HUD Telemetry Display -->
+                <div class="hud-container">
+                    <h2 class="module-title">TELEMETRY HUD</h2>
+                    <div class="hud-grid">
+                        <div class="hud-item">
+                            <span class="hud-label">ALT AGL</span>
+                            <span class="hud-value" id="hud-altitude">0.0m</span>
+                        </div>
+                        <div class="hud-item">
+                            <span class="hud-label">GND SPD</span>
+                            <span class="hud-value" id="hud-speed">0.0m/s</span>
+                        </div>
+                        <div class="hud-item">
+                            <span class="hud-label">HOME DST</span>
+                            <span class="hud-value" id="hud-distance">0m</span>
+                        </div>
+                        <div class="hud-item">
+                            <span class="hud-label">VSPD</span>
+                            <span class="hud-value" id="hud-vspeed">0.0m/s</span>
+                        </div>
+                        <div class="hud-item">
+                            <span class="hud-label">LAT</span>
+                            <span class="hud-value" id="hud-latitude">0.000000</span>
+                        </div>
+                        <div class="hud-item">
+                            <span class="hud-label">LON</span>
+                            <span class="hud-value" id="hud-longitude">0.000000</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Center Column: Map -->
+            <section class="center-column">
+                <div class="map-container">
+                    <h2 class="module-title">MISSION MAP</h2>
+                    <div class="map-controls">
+                        <button class="btn btn-primary" id="clear-mission">CLEAR MISSION</button>
+                        <button class="btn btn-success" id="upload-mission">UPLOAD MISSION</button>
+                        <div class="map-mode-toggle">
+                            <label class="toggle-label">
+                                <input type="checkbox" id="waypoint-mode">
+                                <span class="toggle-slider"></span>
+                                <span class="toggle-text">WAYPOINT MODE</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div id="mission-map" class="map-element"></div>
+                    <div class="waypoint-list-container">
+                        <h3 class="waypoint-list-title">MISSION WAYPOINTS</h3>
+                        <div class="waypoint-list" id="waypoint-list">
+                            <div class="waypoint-header">
+                                <span>#</span>
+                                <span>LATITUDE</span>
+                                <span>LONGITUDE</span>
+                                <span>ALT (m)</span>
+                                <span>SPD (m/s)</span>
+                                <span>ACTION</span>
+                            </div>
+                            <div id="waypoint-items"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right Column: System Status -->
+            <section class="right-column">
+                <!-- Flight Mode and Arm Status -->
+                <div class="flight-status-container">
+                    <h2 class="module-title">FLIGHT STATUS</h2>
+                    <div class="flight-mode-display">
+                        <div class="mode-label">FLIGHT MODE</div>
+                        <div class="mode-value" id="flight-mode">MANUAL</div>
+                    </div>
+                    <div class="arm-status" id="arm-status">
+                        <div class="arm-indicator"></div>
+                        <div class="arm-text">DISARMED</div>
+                    </div>
+                </div>
+
+                <!-- Battery Status -->
+                <div class="battery-container">
+                    <h2 class="module-title">POWER SYSTEMS</h2>
+                    <div class="battery-section">
+                        <div class="battery-label">AIRCRAFT BATTERY</div>
+                        <div class="battery-wrapper">
+                            <div class="battery-bar" id="aircraft-battery">
+                                <div class="battery-fill" id="aircraft-battery-fill"></div>
+                                <div class="battery-voltage" id="aircraft-voltage">0.0V</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="battery-section">
+                        <div class="battery-label">GAMEPAD BATTERY</div>
+                        <div class="battery-wrapper">
+                            <div class="battery-bar" id="gamepad-battery">
+                                <div class="battery-fill" id="gamepad-battery-fill"></div>
+                                <div class="battery-percentage" id="gamepad-percentage">0%</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Signal Strength -->
+                <div class="signal-container">
+                    <h2 class="module-title">SIGNAL STRENGTH</h2>
+                    <div class="signal-item">
+                        <span class="signal-label">WiFi RSSI</span>
+                        <div class="signal-bar">
+                            <div class="signal-fill" id="wifi-signal"></div>
+                            <span class="signal-value" id="wifi-rssi">-100dBm</span>
+                        </div>
+                    </div>
+                    <div class="signal-item">
+                        <span class="signal-label">LoRa RSSI</span>
+                        <div class="signal-bar">
+                            <div class="signal-fill" id="lora-signal"></div>
+                            <span class="signal-value" id="lora-rssi">-100dBm</span>
+                        </div>
+                    </div>
+                    <div class="signal-item">
+                        <span class="signal-label">Uplink RSSI</span>
+                        <div class="signal-bar">
+                            <div class="signal-fill" id="uplink-signal"></div>
+                            <span class="signal-value" id="uplink-rssi">-100dBm</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Alert System -->
+                <div class="alert-container">
+                    <h2 class="module-title">ALERT SYSTEM</h2>
+                    <div class="alert-panel" id="alert-panel">
+                        <div class="alert-item alert-info" id="alert-placeholder">
+                            <span class="alert-icon">ℹ</span>
+                            <span class="alert-text">System Ready</span>
+                        </div>
+                    </div>
+                    <div class="alert-controls">
+                        <button class="btn btn-small" id="clear-alerts">CLEAR ALERTS</button>
+                        <button class="btn btn-small btn-danger" id="test-alerts">TEST ALERTS</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Audio Alert System -->
+    <audio id="alert-sound" preload="auto">
+        <source src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmFgU7k9n1unEiBC13yO/eizEIHWq+8+OWT" type="audio/wav">
+    </audio>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+# LittleFS Partition Scheme for ESP32 Ground Control Station
+# This file defines the partition layout for the ESP32 flash memory
+# Allocates 2MB for the program and 2MB for LittleFS filesystem
+
+# Name,   Type, SubType, Offset,  Size, Flags
+nvs,      data, nvs,     0x9000,  0x4000,
+otadata,  data, ota,     0xd000,  0x2000,
+app0,     app,  ota_0,   0x10000, 0x200000,
+app1,     app,  ota_1,   0x210000,0x200000,
+spiffs,   data, spiffs,  0x410000,0x1F0000,
+coredump,  data, coredump, 0x600000,0x10000,
