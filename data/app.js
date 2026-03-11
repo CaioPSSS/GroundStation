@@ -21,6 +21,12 @@ class GroundControlStation {
         this.maxReconnectAttempts = 10;
         this.reconnectDelay = 1000;
         
+        // NEW: Industrial-grade features
+        this.flightLog = []; // Telemetry Logger array
+        this.lastFlightMode = null; // For speech detection
+        this.heartbeatInterval = null; // Heartbeat timer
+        this.batteryAlertTriggered = false; // Prevent duplicate battery alerts
+        
         this.init();
     }
 
@@ -34,6 +40,9 @@ class GroundControlStation {
         this.initializeEventListeners();
         this.initializePFD();
         this.initializeControlLayout();
+        this.initializeDataManagement(); // NEW: CSV Logger
+        this.initializeSpeechSynthesis(); // NEW: Acoustic Situational Awareness
+        this.startHeartbeat(); // NEW: GCS Failsafe
         this.startSystemClock();
         this.addAlert('System initialized', 'info');
     }
@@ -109,6 +118,7 @@ class GroundControlStation {
             switch (data.type) {
                 case 'telemetry':
                     this.updateTelemetry(data);
+                    this.logTelemetry(data); // NEW: Log telemetry for CSV export
                     break;
                 default:
                     console.log('Unknown message type:', data.type);
@@ -863,11 +873,13 @@ GroundControlStation.prototype.initializePowerControls = function() {
     document.getElementById('btn-arm').addEventListener('click', () => {
         this.sendCommand('ARM_MOTOR', true);
         this.addAlert('Motors ARMED', 'warning');
+        this.speakAlert('Atenção: Motor Armado', true); // NEW: Priority speech
     });
     
     document.getElementById('btn-disarm').addEventListener('click', () => {
         this.sendCommand('ARM_MOTOR', false);
         this.addAlert('Motors DISARMED', 'info');
+        this.speakAlert('Motor Desarmado', false); // NEW: Normal speech
     });
 };
 
@@ -1013,6 +1025,276 @@ GroundControlStation.prototype.sendCommand = function(action, value) {
     } else {
         console.warn('WebSocket not connected, command queued:', command);
         this.addAlert('WebSocket not connected - command not sent', 'warning');
+    }
+};
+
+// =============================================================================
+// NEW: INDUSTRIAL-GRADE FEATURES
+// =============================================================================
+
+// 1. INTELLIGENT TELEMETRY LOGGER (CSV EXPORT)
+// =============================================================================
+
+GroundControlStation.prototype.initializeDataManagement = function() {
+    // Connect download button to CSV export function
+    document.getElementById('btn-download-log').addEventListener('click', () => {
+        this.exportLogToCSV();
+    });
+    
+    // Update log count display
+    this.updateLogDisplay();
+};
+
+GroundControlStation.prototype.logTelemetry = function(data) {
+    // Create log entry with timestamp and key parameters
+    const logEntry = {
+        timestamp: Date.now(),
+        altitude: data.altitude_m || 0,
+        speed: data.ground_speed_ms || 0,
+        roll: data.roll_deg || 0,
+        pitch: data.pitch_deg || 0,
+        heading: data.heading_deg || 0,
+        battery: data.battery_v || 0,
+        flightMode: data.fsm_state || 0,
+        rssi: data.rssi_uplink || 0,
+        latitude: data.latitude || 0,
+        longitude: data.longitude || 0
+    };
+    
+    // Add to flight log (avoid deep clones for performance)
+    this.flightLog.push(logEntry);
+    
+    // Update display
+    this.updateLogDisplay();
+    
+    // Optional: Limit log size to prevent memory issues (keep last 10000 entries)
+    if (this.flightLog.length > 10000) {
+        this.flightLog = this.flightLog.slice(-5000); // Keep last 5000
+        this.addAlert('Flight log trimmed to 5000 entries', 'warning');
+    }
+};
+
+GroundControlStation.prototype.updateLogDisplay = function() {
+    const logCount = document.getElementById('log-count');
+    const logStatus = document.getElementById('log-status');
+    
+    if (logCount) {
+        logCount.textContent = this.flightLog.length;
+    }
+    
+    if (logStatus) {
+        if (this.flightLog.length === 0) {
+            logStatus.textContent = 'Ready';
+            logStatus.className = 'log-status';
+        } else if (this.flightLog.length < 100) {
+            logStatus.textContent = 'Recording';
+            logStatus.className = 'log-status';
+        } else if (this.flightLog.length < 1000) {
+            logStatus.textContent = 'Good';
+            logStatus.className = 'log-status';
+        } else {
+            logStatus.textContent = 'Large';
+            logStatus.className = 'log-status warning';
+        }
+    }
+};
+
+GroundControlStation.prototype.exportLogToCSV = function() {
+    if (this.flightLog.length === 0) {
+        this.addAlert('No flight data to export', 'warning');
+        return;
+    }
+    
+    // Create CSV headers
+    const headers = [
+        'Timestamp',
+        'UTC Time',
+        'Altitude (m)',
+        'Speed (m/s)',
+        'Roll (deg)',
+        'Pitch (deg)',
+        'Heading (deg)',
+        'Battery (V)',
+        'Flight Mode',
+        'RSSI (dBm)',
+        'Latitude',
+        'Longitude'
+    ];
+    
+    // Convert log entries to CSV rows
+    const csvRows = [headers.join(',')];
+    
+    for (const entry of this.flightLog) {
+        const row = [
+            entry.timestamp,
+            new Date(entry.timestamp).toISOString(),
+            entry.altitude.toFixed(2),
+            entry.speed.toFixed(2),
+            entry.roll.toFixed(2),
+            entry.pitch.toFixed(2),
+            entry.heading.toFixed(2),
+            entry.battery.toFixed(3),
+            this.getFlightModeName(entry.flightMode),
+            entry.rssi,
+            entry.latitude.toFixed(6),
+            entry.longitude.toFixed(6)
+        ];
+        csvRows.push(row.join(','));
+    }
+    
+    // Create CSV string
+    const csvString = csvRows.join('\n');
+    
+    // Create blob and download
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    
+    // Generate filename with timestamp
+    const now = new Date();
+    const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const filename = `flight_log_${timestamp}.csv`;
+    
+    // Create download link
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    // Cleanup
+    URL.revokeObjectURL(url);
+    
+    this.addAlert(`Flight log exported: ${this.flightLog.length} entries`, 'info');
+    console.log(`CSV exported with ${this.flightLog.length} entries`);
+};
+
+GroundControlStation.prototype.getFlightModeName = function(mode) {
+    const modeNames = {
+        0: 'MANUAL',
+        1: 'STABILIZE',
+        2: 'HOLD',
+        3: 'AUTO',
+        4: 'RTL'
+    };
+    return modeNames[mode] || `UNKNOWN(${mode})`;
+};
+
+// 2. ACOUSTIC SITUATIONAL AWARENESS (Web Speech API)
+// =============================================================================
+
+GroundControlStation.prototype.initializeSpeechSynthesis = function() {
+    // Check if speech synthesis is available
+    if (!('speechSynthesis' in window)) {
+        console.warn('Speech synthesis not supported in this browser');
+        this.addAlert('Speech synthesis not available', 'warning');
+        return;
+    }
+    
+    console.log('Speech synthesis initialized');
+    this.speechEnabled = true;
+};
+
+GroundControlStation.prototype.speakAlert = function(message, priority = false) {
+    if (!this.speechEnabled || !window.speechSynthesis) {
+        return;
+    }
+    
+    // Cancel previous speech if this is priority
+    if (priority) {
+        window.speechSynthesis.cancel();
+    }
+    
+    // Create utterance
+    const utterance = new SpeechSynthesisUtterance(message);
+    
+    // Configure for Brazilian Portuguese
+    utterance.lang = 'pt-BR';
+    utterance.rate = 0.9; // Slightly slower for clarity
+    utterance.pitch = 1.0;
+    utterance.volume = 0.8;
+    
+    // Find Brazilian voice if available
+    const voices = window.speechSynthesis.getVoices();
+    const ptVoice = voices.find(voice => voice.lang.startsWith('pt'));
+    if (ptVoice) {
+        utterance.voice = ptVoice;
+    }
+    
+    // Speak
+    window.speechSynthesis.speak(utterance);
+    
+    console.log(`Speech: "${message}" (priority: ${priority})`);
+};
+
+// Enhanced telemetry update with speech integration
+GroundControlStation.prototype.updateTelemetry = function(data) {
+    // Store telemetry data
+    this.telemetryData = data;
+    
+    // Update all displays
+    this.updateHUD(data);
+    this.updatePFD(data);
+    this.updateMap(data);
+    this.updateSystemStatus(data);
+    
+    // NEW: Check for flight mode changes
+    if (data.fsm_state !== this.lastFlightMode && this.lastFlightMode !== null) {
+        const modeName = this.getFlightModeName(data.fsm_state);
+        this.speakAlert(`Modo de voo alterado para ${modeName}`, false);
+        console.log(`Flight mode changed: ${this.lastFlightMode} -> ${data.fsm_state}`);
+    }
+    this.lastFlightMode = data.fsm_state;
+    
+    // NEW: Check for critical battery voltage
+    const batteryVoltage = data.battery_v || 0;
+    if (batteryVoltage < 6.8 && !this.batteryAlertTriggered) {
+        this.speakAlert('Alerta: Tensão da bateria crítica', true);
+        this.batteryAlertTriggered = true;
+        this.addAlert('CRITICAL: Battery voltage below 6.8V', 'danger');
+    } else if (batteryVoltage >= 7.0) {
+        // Reset battery alert when voltage recovers
+        this.batteryAlertTriggered = false;
+    }
+};
+
+// 3. GCS FAILSAFE (HEARTBEAT)
+// =============================================================================
+
+GroundControlStation.prototype.startHeartbeat = function() {
+    // Clear any existing interval
+    if (this.heartbeatInterval) {
+        clearInterval(this.heartbeatInterval);
+    }
+    
+    // Start heartbeat interval (1 Hz)
+    this.heartbeatInterval = setInterval(() => {
+        this.sendHeartbeat();
+    }, 1000);
+    
+    console.log('GCS Heartbeat started (1 Hz)');
+};
+
+GroundControlStation.prototype.sendHeartbeat = function() {
+    // Only send if WebSocket is connected
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        const heartbeat = {
+            type: 'command',
+            action: 'HEARTBEAT',
+            timestamp: Date.now()
+        };
+        
+        this.ws.send(JSON.stringify(heartbeat));
+    }
+};
+
+GroundControlStation.prototype.stopHeartbeat = function() {
+    if (this.heartbeatInterval) {
+        clearInterval(this.heartbeatInterval);
+        this.heartbeatInterval = null;
+        console.log('GCS Heartbeat stopped');
     }
 };
 
