@@ -200,6 +200,7 @@ public:
         DynamicJsonDocument doc(512);
         doc["type"] = "telemetry";
         doc["fsm_state"] = global_state.telemetry.fsm_state;
+        doc["arm_status"] = (global_state.gamepad_arm_switch == 1);
         doc["altitude_m"] = global_state.telemetry.altitude_cm / 100.0f;
         doc["roll_deg"] = global_state.telemetry.roll_deg_10 / 10.0f;
         doc["pitch_deg"] = global_state.telemetry.pitch_deg_10 / 10.0f;
@@ -234,10 +235,10 @@ public:
                     processCommand(global_state.serialInputBuffer);
                     global_state.serialInputBuffer = "";
                 }
-            } else if (c >= 32 && c <= 126) { // Printable characters only
+            } else if (c >= 32 && c <= 126) {
                 global_state.serialInputBuffer += c;
                 if (global_state.serialInputBuffer.length() > 512) {
-                    global_state.serialInputBuffer = ""; // Prevent buffer overflow
+                    global_state.serialInputBuffer = ""; 
                 }
             }
         }
@@ -254,8 +255,50 @@ private:
         }
         
         const char* type = doc["type"];
+        
+        // 1. Receção de Missões (Waypoints)
         if (strcmp(type, "waypoints") == 0) {
             handleWaypointsUpload(doc["waypoints"]);
+        }
+        // 2. Receção de Comandos de Ação (Botões e Joystick Web)
+        else if (strcmp(type, "command") == 0) {
+            const char* action = doc["action"];
+            
+            // Trava o Mutex para garantir Thread-Safety ao alterar o estado global
+            if (xSemaphoreTake(global_state.mutex, pdMS_TO_TICKS(50))) {
+                
+                if (strcmp(action, "HEARTBEAT") == 0) {
+                    // Apenas regista que a GCS está viva (útil para Failsafe no futuro)
+                    // global_state.last_gcs_heartbeat = millis();
+                }
+                else if (strcmp(action, "SET_MODE") == 0) {
+                    const char* modeStr = doc["value"];
+                    if (strcmp(modeStr, "MANUAL") == 0) global_state.gamepad_mode = 0;
+                    else if (strcmp(modeStr, "STABILIZE") == 0) global_state.gamepad_mode = 1;
+                    else if (strcmp(modeStr, "HOLD") == 0) global_state.gamepad_mode = 2;
+                    else if (strcmp(modeStr, "AUTO") == 0) global_state.gamepad_mode = 3;
+                    else if (strcmp(modeStr, "RTL") == 0) global_state.gamepad_mode = 4;
+                    Serial.printf("GCS Override: Mode set to %s\n", modeStr);
+                }
+                else if (strcmp(action, "ARM_MOTOR") == 0) {
+                    global_state.gamepad_arm_switch = doc["value"].as<bool>() ? 1 : 0;
+                    Serial.printf("GCS Override: Motor %s\n", global_state.gamepad_arm_switch ? "ARMED" : "DISARMED");
+                }
+                else if (strcmp(action, "JOYSTICK") == 0) {
+                    // Override do Joystick Virtual da Web
+                    global_state.gamepad_roll = doc["roll"];
+                    global_state.gamepad_pitch = doc["pitch"];
+                }
+                else if (strcmp(action, "SET_TARGETS") == 0) {
+                    // Nota: Target Speed e Altitude ainda não existem no struct 'PacketUplinkLoRa_t'
+                    // Mas a receção está validada para futura implementação aerodinâmica.
+                    uint8_t tgt_speed = doc["speed"];
+                    uint16_t tgt_alt = doc["altitude"];
+                    Serial.printf("GCS Targets Rx: %dm/s, %dm\n", tgt_speed, tgt_alt);
+                }
+                
+                xSemaphoreGive(global_state.mutex);
+            }
         }
     }
     
@@ -294,13 +337,18 @@ class GamepadController {
 public:
     void initialize() {
         BP32.setup(
-            [](ControllerPtr ctl) { // Callback de conexão
-                Serial.println("Controle Conectado!");
+            [](ControllerPtr ctl) {
+                Serial.println("Controle Conectado fisicamente!");
                 if (myGamepad == nullptr) {
                     myGamepad = ctl;
+                    // --- COMANDOS PARA PARAR O PISCA-PISCA ---
+                    ctl->setPlayerLEDs(1);      // Define como Jogador 1 (Luz fixa)
+                    ctl->setColorLED(0, 255, 0); // Se for PS4/PS5, fica Verde
+                    ctl->setRumble(0xc0, 0x40);  // Dá uma tremidinha curta de confirmação
+                    // ---------------------------------------
                 }
             },
-            [](ControllerPtr ctl) { // Callback de desconexão
+            [](ControllerPtr ctl) {
                 Serial.println("Controle Desconectado!");
                 if (myGamepad == ctl) {
                     myGamepad = nullptr;
@@ -337,8 +385,14 @@ public:
             // Arm/disarm com Botão A
             static bool last_a_state = false;
             bool current_a_state = myGamepad->a();
+
             if (current_a_state && !last_a_state) {
-                global_state.gamepad_arm_switch = !global_state.gamepad_arm_switch;
+                if (xSemaphoreTake(global_state.mutex, pdMS_TO_TICKS(20))) {
+                    // Inverte o estado atual
+                    global_state.gamepad_arm_switch = (global_state.gamepad_arm_switch == 0) ? 1 : 0;
+                    Serial.printf("Controle: Motor %s\n", global_state.gamepad_arm_switch ? "ARMADO" : "DESARMADO");
+                    xSemaphoreGive(global_state.mutex);
+                }
             }
             last_a_state = current_a_state;
             
@@ -384,7 +438,10 @@ void realTimeTask(void *parameter) {
                 }
             }
             
-            // Send uplink command
+             // Send uplink command e Copiar Waypoints
+            std::vector<PacketWaypointLoRa_t> waypoints_to_send; // Declarado fora do mutex
+            bool should_send_waypoints = false;
+
             if (xSemaphoreTake(global_state.mutex, pdMS_TO_TICKS(10))) {
                 PacketUplinkLoRa_t cmd;
                 cmd.sync_header = 0xBB;
@@ -397,19 +454,21 @@ void realTimeTask(void *parameter) {
                 
                 lora_comm.sendUplinkCommand(cmd);
                 
-                // CRÍTICO: Copiar waypoints localmente e liberar Mutex ANTES dos delays
-                std::vector<PacketWaypointLoRa_t> waypoints_to_send;
+                // CRÍTICO: Copiar waypoints localmente
                 if (global_state.waypoints_dirty) {
-                    waypoints_to_send = global_state.waypoints; // Cópia em RAM
+                    waypoints_to_send = global_state.waypoints; // Cópia rápida em RAM
                     global_state.waypoints_dirty = false;
+                    should_send_waypoints = true;
                 }
                 
-                xSemaphoreGive(global_state.mutex); // LIBERA O MUTEX AQUI!
-                
-                // Transmite livremente sem travar o resto do sistema
+                xSemaphoreGive(global_state.mutex); // LIBERA O MUTEX SEMPRE AQUI
+            }
+
+            // Transmite livremente FORA da zona bloqueada pelo Mutex
+            if (should_send_waypoints) {
                 for (const auto& wp : waypoints_to_send) {
                     lora_comm.sendWaypoint(wp);
-                    vTaskDelay(pdMS_TO_TICKS(50)); // Delay seguro fora do Mutex
+                    vTaskDelay(pdMS_TO_TICKS(50)); // Delay seguro que não trava o Core 0
                 }
             }
         }
@@ -422,7 +481,7 @@ void realTimeTask(void *parameter) {
 
 // CORE 0: Serial communication and telemetry broadcast (5Hz)
 void serialTask(void *parameter) {
-    const TickType_t xFrequency_5Hz = pdMS_TO_TICKS(200);
+    const TickType_t xFrequency_5Hz = pdMS_TO_TICKS(20);
     TickType_t xLastWakeTime = xTaskGetTickCount();
     
     while (1) {

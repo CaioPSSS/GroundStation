@@ -183,6 +183,21 @@ class GroundControlStation {
         
         // Update flight status
         this.updateFlightStatus(data.fsm_state);
+
+        if (data.hasOwnProperty('arm_status')) {
+        const armBtn = document.getElementById('btn-arm'); // Certifique-se que o ID do botão é este
+        if (armBtn) {
+            if (data.arm_status) {
+                armBtn.innerText = "MOTOR ARMADO";
+                armBtn.classList.add('active'); // Adicione um estilo vermelho/alerta no CSS
+                armBtn.style.backgroundColor = "#ff4444";
+            } else {
+                armBtn.innerText = "MOTOR DESARMADO";
+                armBtn.classList.remove('active');
+                armBtn.style.backgroundColor = "#444444";
+            }
+        }
+    }
         
         // Update battery
         this.updateBattery(data.battery_v);
