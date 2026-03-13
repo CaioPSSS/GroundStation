@@ -1,16 +1,11 @@
 #include <Arduino.h>
-#include <WiFi.h>
-#include <ESPAsyncWebServer.h>
-#include <AsyncWebSocket.h>
 #include <LoRa.h>
 #include <Bluepad32.h>
-#include <LittleFS.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
 #include <ArduinoJson.h>
 #include <vector>
-#include <esp_wifi.h>
 
 // =============================================================================
 // BLUEPAD32 GLOBAL CONTROLLER POINTER
@@ -81,12 +76,14 @@ struct GlobalState {
     // System status
     uint32_t last_telemetry_ms;
     uint32_t last_gamepad_ms;
-    int32_t wifi_rssi;
     int32_t lora_rssi;
     
     // Mission waypoints
     std::vector<PacketWaypointLoRa_t> waypoints;
     bool waypoints_dirty;
+    
+    // Serial communication
+    String serialInputBuffer;
     
     // Thread safety
     SemaphoreHandle_t mutex;
@@ -185,31 +182,14 @@ public:
 };
 
 // =============================================================================
-// WEBSOCKET SERVER CLASS - FRONTEND COMMUNICATION
+// SERIAL COMMUNICATION CLASS - USB TELEMETRY
 // =============================================================================
 
-class GCSWebSocketServer {
-private:
-    AsyncWebServer server;
-    AsyncWebSocket ws;
-    
+class SerialComm {
 public:
-    GCSWebSocketServer() : server(80), ws("/ws") {}
-    
     void initialize() {
-        // Configure WebSocket
-        ws.onEvent([this](AsyncWebSocket *server, AsyncWebSocketClient *client,
-                         AwsEventType type, void *arg, uint8_t *data, size_t len) {
-            this->onWebSocketEvent(server, client, type, arg, data, len);
-        });
-        
-        server.addHandler(&ws);
-        
-        // Serve static files from LittleFS
-        server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
-        
-        server.begin();
-        Serial.println("WebSocket server started");
+        Serial.begin(115200);
+        Serial.println("Serial communication initialized");
     }
     
     void broadcastTelemetry() {
@@ -217,7 +197,6 @@ public:
             return;
         }
         
-        // CRÍTICO: Usar DynamicJsonDocument para evitar Stack Overflow na task LwIP
         DynamicJsonDocument doc(512);
         doc["type"] = "telemetry";
         doc["fsm_state"] = global_state.telemetry.fsm_state;
@@ -238,41 +217,36 @@ public:
         
         // System status
         JsonObject system = doc.createNestedObject("system");
-        system["wifi_rssi"] = global_state.wifi_rssi;
         system["lora_rssi"] = global_state.lora_rssi;
         
         xSemaphoreGive(global_state.mutex);
         
         String jsonString;
         serializeJson(doc, jsonString);
-        ws.textAll(jsonString);
+        Serial.println(jsonString);
     }
     
-private:
-    void onWebSocketEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
-                         AwsEventType type, void *arg, uint8_t *data, size_t len) {
-        switch (type) {
-            case WS_EVT_CONNECT:
-                Serial.printf("WebSocket client #%u connected\n", client->id());
-                break;
-                
-            case WS_EVT_DISCONNECT:
-                Serial.printf("WebSocket client #%u disconnected\n", client->id());
-                break;
-                
-            case WS_EVT_DATA:
-                handleWebSocketMessage(client, data, len);
-                break;
-                
-            default:
-                break;
+    void processSerialCommands() {
+        while (Serial.available()) {
+            char c = Serial.read();
+            if (c == '\n') {
+                if (global_state.serialInputBuffer.length() > 0) {
+                    processCommand(global_state.serialInputBuffer);
+                    global_state.serialInputBuffer = "";
+                }
+            } else if (c >= 32 && c <= 126) { // Printable characters only
+                global_state.serialInputBuffer += c;
+                if (global_state.serialInputBuffer.length() > 512) {
+                    global_state.serialInputBuffer = ""; // Prevent buffer overflow
+                }
+            }
         }
     }
     
-    void handleWebSocketMessage(AsyncWebSocketClient *client, uint8_t *data, size_t len) {
-        // CRÍTICO: Usar DynamicJsonDocument para evitar Stack Overflow na task LwIP
+private:
+    void processCommand(const String& command) {
         DynamicJsonDocument doc(1024);
-        DeserializationError error = deserializeJson(doc, data, len);
+        DeserializationError error = deserializeJson(doc, command);
         
         if (error) {
             Serial.printf("JSON parse error: %s\n", error.c_str());
@@ -296,8 +270,8 @@ private:
             PacketWaypointLoRa_t packet;
             packet.sync_header = 0xCC;
             packet.wp_index = wp["index"];
-            packet.lat_e7 = wp["lat"] * 10000000;
-            packet.lon_e7 = wp["lon"] * 10000000;
+            packet.lat_e7 = wp["lat"].as<double>() * 10000000;
+            packet.lon_e7 = wp["lon"].as<double>() * 10000000;
             packet.alt_m = wp["alt"];
             packet.speed_ms = wp["speed"];
             packet.checksum_crc8 = CRC::calculateCRC8((uint8_t*)&packet, sizeof(PacketWaypointLoRa_t) - 1);
@@ -319,7 +293,7 @@ private:
 class GamepadController {
 public:
     void initialize() {
-        Bluepad32.setupControllerEvents(
+        BP32.setup(
             [](ControllerPtr ctl) { // Callback de conexão
                 Serial.println("Controle Conectado!");
                 if (myGamepad == nullptr) {
@@ -338,7 +312,7 @@ public:
     
     void update() {
         // ESSENCIAL: O Bluepad32 precisa atualizar o estado interno primeiro
-        bool dataUpdated = Bluepad32.update(); 
+        bool dataUpdated = BP32.update();
         
         if (myGamepad && myGamepad->isConnected()) {
             global_state.gamepad_connected = true;
@@ -381,10 +355,10 @@ public:
 // =============================================================================
 
 LoRaComm lora_comm;
-GCSWebSocketServer ws_server;
+SerialComm serial_comm;
 GamepadController gamepad_ctrl;
 
-// CORE 1: Real-time Bluetooth and LoRa communication (50Hz/10Hz) - CORRECTED
+// CORE 1: Real-time Bluetooth and LoRa communication (50Hz/10Hz)
 void realTimeTask(void *parameter) {
     // Frequência base de 50Hz (20ms)
     const TickType_t xFrequency = pdMS_TO_TICKS(20);
@@ -446,19 +420,17 @@ void realTimeTask(void *parameter) {
     }
 }
 
-// CORE 0: Async WiFi and WebSocket communication (5Hz) - CORRECTED
-void asyncTask(void *parameter) {
+// CORE 0: Serial communication and telemetry broadcast (5Hz)
+void serialTask(void *parameter) {
     const TickType_t xFrequency_5Hz = pdMS_TO_TICKS(200);
     TickType_t xLastWakeTime = xTaskGetTickCount();
     
     while (1) {
-        // 5Hz: WebSocket telemetry broadcast
-        ws_server.broadcastTelemetry();
+        // 5Hz: Serial telemetry broadcast
+        serial_comm.broadcastTelemetry();
         
-        // Update WiFi RSSI
-        global_state.wifi_rssi = WiFi.RSSI();
-        
-        // NOTA: Removido ws_server.cleanupClients() - a biblioteca gerencia automaticamente
+        // Process incoming serial commands (non-blocking)
+        serial_comm.processSerialCommands();
         
         // Coloca a task para dormir estritamente até o próximo ciclo de 200ms
         vTaskDelayUntil(&xLastWakeTime, xFrequency_5Hz);
@@ -480,40 +452,21 @@ void setup() {
         ESP.restart();
     }
     
-    // Initialize LittleFS
-    if (!LittleFS.begin(true)) {
-        Serial.println("LittleFS initialization failed!");
-        ESP.restart();
-    }
-    
-    // Initialize WiFi (Station mode - connect to mobile hotspot)
-    WiFi.begin("GCS_Hotspot", "password123"); // Replace with your credentials
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
-    }
-    Serial.println("\nWiFi connected!");
-    Serial.printf("IP address: %s\n", WiFi.localIP().toString().c_str());
-    
-    // CRÍTICO: Desabilitar economia de energia do WiFi para máxima performance
-    esp_wifi_set_ps(WIFI_PS_NONE);
+    // Initialize Serial communication
+    serial_comm.initialize();
     
     // Initialize LoRa
     if (!lora_comm.initialize()) {
         Serial.println("LoRa initialization failed!");
-        ESP.restart();
+        //ESP.restart();
     }
     
-    // Initialize Gamepad (CORRECTED)
+    // Initialize Gamepad
     gamepad_ctrl.initialize();
-    // NOTA: Bluepad32.begin() é chamado internamente pelo setupControllerEvents
     
-    // Initialize WebSocket server
-    ws_server.initialize();
-    
-    // Create FreeRTOS tasks on specific cores with increased stack for JSON processing
-    xTaskCreatePinnedToCore(realTimeTask, "RealTime", 8192, NULL, 3, NULL, 1); // Core 1 - Stack aumentado
-    xTaskCreatePinnedToCore(asyncTask, "Async", 8192, NULL, 2, NULL, 0);      // Core 0 - Stack aumentado
+    // Create FreeRTOS tasks on specific cores
+    xTaskCreatePinnedToCore(realTimeTask, "RealTime", 8192, NULL, 3, NULL, 1); // Core 1
+    xTaskCreatePinnedToCore(serialTask, "Serial", 4096, NULL, 2, NULL, 0);    // Core 0
     
     Serial.println("=== GCS SYSTEM READY ===");
 }

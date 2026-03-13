@@ -4,7 +4,9 @@ GROUND CONTROL STATION - AVIONICS GRADE JAVASCRIPT APPLICATION
 
 class GroundControlStation {
     constructor() {
-        this.ws = null;
+        this.port = null;
+        this.reader = null;
+        this.writer = null;
         this.map = null;
         this.aircraftMarker = null;
         this.aircraftPath = [];
@@ -13,13 +15,10 @@ class GroundControlStation {
         this.homePosition = null;
         this.telemetryData = {};
         this.connectionStatus = {
-            websocket: false,
+            usb: false,
             gamepad: false,
             lora: false
         };
-        this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 10;
-        this.reconnectDelay = 1000;
         
         // NEW: Industrial-grade features
         this.flightLog = []; // Telemetry Logger array
@@ -35,7 +34,6 @@ class GroundControlStation {
     // =============================================================================
     
     init() {
-        this.initializeWebSocket();
         this.initializeMap();
         this.initializeEventListeners();
         this.initializePFD();
@@ -44,76 +42,105 @@ class GroundControlStation {
         this.initializeSpeechSynthesis(); // NEW: Acoustic Situational Awareness
         this.startHeartbeat(); // NEW: GCS Failsafe
         this.startSystemClock();
-        this.addAlert('System initialized', 'info');
+        this.addAlert('System initialized - Click "CONNECT GCS (USB)" to connect', 'info');
     }
 
     // =============================================================================
-    // WEBSOCKET COMMUNICATION
+    // WEB SERIAL API COMMUNICATION
     // =============================================================================
     
-    initializeWebSocket() {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws`;
-        
-        this.connectWebSocket(wsUrl);
-    }
-
-    connectWebSocket(url) {
+    async connectUSB() {
         try {
-            this.ws = new WebSocket(url);
+            // Request port from user
+            this.port = await navigator.serial.requestPort();
             
-            this.ws.onopen = () => {
-                console.log('WebSocket connected');
-                this.connectionStatus.websocket = true;
-                this.updateConnectionStatus('ws-status', true);
-                this.reconnectAttempts = 0;
-                this.addAlert('WebSocket connected', 'success');
-            };
+            // Open port with high baud rate
+            await this.port.open({ baudRate: 115200 });
             
-            this.ws.onmessage = (event) => {
-                this.handleWebSocketMessage(event);
-            };
+            // Setup text decoder for line-by-line reading
+            const textDecoder = new TextDecoderStream();
+            const readableStreamClosed = this.port.readable.pipeTo(textDecoder.writable);
+            this.reader = textDecoder.readable.getReader();
             
-            this.ws.onclose = () => {
-                console.log('WebSocket disconnected');
-                this.connectionStatus.websocket = false;
-                this.updateConnectionStatus('ws-status', false);
-                this.addAlert('WebSocket disconnected', 'warning');
-                this.attemptReconnect();
-            };
+            // Setup text encoder for writing
+            const textEncoder = new TextEncoderStream();
+            const writableStreamClosed = textEncoder.readable.pipeTo(this.port.writable);
+            this.writer = textEncoder.writable.getWriter();
             
-            this.ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                this.addAlert('WebSocket connection error', 'danger');
-            };
+            // Update connection status
+            this.connectionStatus.usb = true;
+            this.updateConnectionStatus('usb-status', true);
+            this.addAlert('USB connected successfully', 'success');
+            
+            // Start reading telemetry
+            this.readTelemetry();
             
         } catch (error) {
-            console.error('Failed to create WebSocket:', error);
-            this.addAlert('Failed to create WebSocket connection', 'danger');
+            console.error('Failed to connect USB:', error);
+            this.addAlert('Failed to connect USB: ' + error.message, 'danger');
         }
     }
-
-    attemptReconnect() {
-        if (this.reconnectAttempts < this.maxReconnectAttempts) {
-            this.reconnectAttempts++;
-            const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
-            
-            console.log(`Attempting to reconnect in ${delay}ms (attempt ${this.reconnectAttempts})`);
-            this.addAlert(`Reconnecting... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`, 'info');
-            
-            setTimeout(() => {
-                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsUrl = `${protocol}//${window.location.host}/ws`;
-                this.connectWebSocket(wsUrl);
-            }, delay);
-        } else {
-            this.addAlert('Max reconnection attempts reached', 'danger');
-        }
-    }
-
-    handleWebSocketMessage(event) {
+    
+    async disconnectUSB() {
         try {
-            const data = JSON.parse(event.data);
+            if (this.reader) {
+                await this.reader.cancel();
+                await this.reader.releaseLock();
+            }
+            if (this.writer) {
+                await this.writer.releaseLock();
+            }
+            if (this.port) {
+                await this.port.close();
+            }
+            
+            this.port = null;
+            this.reader = null;
+            this.writer = null;
+            
+            this.connectionStatus.usb = false;
+            this.updateConnectionStatus('usb-status', false);
+            this.addAlert('USB disconnected', 'warning');
+            
+        } catch (error) {
+            console.error('Error disconnecting USB:', error);
+        }
+    }
+    
+    async readTelemetry() {
+        let buffer = '';
+        
+        try {
+            while (true) {
+                const { value, done } = await this.reader.read();
+                if (done) break;
+                
+                buffer += value;
+                
+                // Process complete lines
+                let lines = buffer.split('\n');
+                buffer = lines.pop(); // Keep incomplete line in buffer
+                
+                for (const line of lines) {
+                    if (line.trim()) {
+                        this.handleTelemetryLine(line.trim());
+                    }
+                }
+            }
+        } catch (error) {
+            if (error instanceof DOMException && error.name === 'NetworkError') {
+                this.addAlert('USB connection lost', 'danger');
+                this.connectionStatus.usb = false;
+                this.updateConnectionStatus('usb-status', false);
+            } else {
+                console.error('Error reading telemetry:', error);
+            }
+        }
+    }
+    
+    handleTelemetryLine(line) {
+        try {
+            const data = JSON.parse(line);
             
             switch (data.type) {
                 case 'telemetry':
@@ -124,14 +151,19 @@ class GroundControlStation {
                     console.log('Unknown message type:', data.type);
             }
         } catch (error) {
-            console.error('Failed to parse WebSocket message:', error);
+            console.error('Failed to parse telemetry line:', error, line);
         }
     }
-
-    sendWebSocketMessage(data) {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify(data));
-            return true;
+    
+    async sendSerialCommand(data) {
+        if (this.writer) {
+            try {
+                await this.writer.write(JSON.stringify(data) + '\n');
+                return true;
+            } catch (error) {
+                console.error('Failed to send serial command:', error);
+                this.addAlert('Failed to send command', 'danger');
+            }
         }
         return false;
     }
@@ -351,10 +383,10 @@ class GroundControlStation {
             waypoints: this.waypoints
         };
         
-        if (this.sendWebSocketMessage(missionData)) {
+        if (this.sendSerialCommand(missionData)) {
             this.addAlert(`Mission uploaded: ${this.waypoints.length} waypoints`, 'success');
         } else {
-            this.addAlert('Failed to upload mission - WebSocket not connected', 'danger');
+            this.addAlert('Failed to upload mission - USB not connected', 'danger');
         }
     }
 
@@ -618,9 +650,6 @@ class GroundControlStation {
     
     updateSignalStrength(systemData) {
         if (!systemData) return;
-        
-        // WiFi
-        this.updateSignalBar('wifi-signal', 'wifi-rssi', systemData.wifi_rssi || -100);
         
         // LoRa
         this.updateSignalBar('lora-signal', 'lora-rssi', systemData.lora_rssi || -100);
@@ -1019,12 +1048,11 @@ GroundControlStation.prototype.sendCommand = function(action, value) {
         value: value
     };
     
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify(command));
+    if (this.sendSerialCommand(command)) {
         console.log('Command sent:', command);
     } else {
-        console.warn('WebSocket not connected, command queued:', command);
-        this.addAlert('WebSocket not connected - command not sent', 'warning');
+        console.warn('USB not connected, command not sent:', command);
+        this.addAlert('USB not connected - command not sent', 'warning');
     }
 };
 
@@ -1278,15 +1306,15 @@ GroundControlStation.prototype.startHeartbeat = function() {
 };
 
 GroundControlStation.prototype.sendHeartbeat = function() {
-    // Only send if WebSocket is connected
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+    // Only send if USB is connected
+    if (this.connectionStatus.usb) {
         const heartbeat = {
             type: 'command',
             action: 'HEARTBEAT',
             timestamp: Date.now()
         };
         
-        this.ws.send(JSON.stringify(heartbeat));
+        this.sendSerialCommand(heartbeat);
     }
 };
 

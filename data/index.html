@@ -16,9 +16,9 @@
             <div class="header-left">
                 <h1 class="gcs-title">GROUND CONTROL STATION</h1>
                 <div class="connection-status">
-                    <div class="status-indicator" id="ws-status">
+                    <div class="status-indicator" id="usb-status">
                         <span class="status-dot"></span>
-                        <span class="status-text">WEBSOCKET</span>
+                        <span class="status-text">USB</span>
                     </div>
                     <div class="status-indicator" id="gamepad-status">
                         <span class="status-dot"></span>
@@ -31,6 +31,7 @@
                 </div>
             </div>
             <div class="header-right">
+                <button class="btn btn-primary btn-large" id="connect-usb" onclick="gcs.connectUSB()">CONNECT GCS (USB)</button>
                 <div class="system-time" id="system-time">00:00:00</div>
                 <div class="latency-display">
                     <span class="latency-label">PING:</span>
@@ -178,13 +179,6 @@
                 <!-- Signal Strength -->
                 <div class="signal-container">
                     <h2 class="module-title">SIGNAL STRENGTH</h2>
-                    <div class="signal-item">
-                        <span class="signal-label">WiFi RSSI</span>
-                        <div class="signal-bar">
-                            <div class="signal-fill" id="wifi-signal"></div>
-                            <span class="signal-value" id="wifi-rssi">-100dBm</span>
-                        </div>
-                    </div>
                     <div class="signal-item">
                         <span class="signal-label">LoRa RSSI</span>
                         <div class="signal-bar">
